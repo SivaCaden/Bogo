@@ -48,11 +48,13 @@ local function fmt_attempts(n)
   return s:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
 end
 
-local function render(buf, arr, attempts, start_time, done)
+local function render(buf, arr, attempts, start_time, start_hrtime, done)
   local elapsed = fmt_time(os.time() - start_time)
+  local elapsed_sec = math.max(0.001, (uv.hrtime() - start_hrtime) / 1e9)
+  local sps = attempts / elapsed_sec
   local status = done and "*** SORTED! *** (q to close)" or "q to quit"
-  local header = string.format(" BogoSort | shuffles: %s | elapsed: %s | %s",
-    fmt_attempts(attempts), elapsed, status)
+  local header = string.format(" %s SpS | shuffles: %s | elapsed: %s | %s",
+    fmt_attempts(math.floor(sps)), fmt_attempts(attempts), elapsed, status)
 
   local lines = {}
   table.insert(lines, header)
@@ -111,7 +113,8 @@ function M.start()
 
   local attempts   = 1
   local start_time = os.time()
-  local last_render = uv.hrtime()
+  local start_hrtime = uv.hrtime()
+  local last_render = start_hrtime
 
   local buf = vim.api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = "wipe"
@@ -132,7 +135,7 @@ function M.start()
   vim.wo[win].wrap = false
   vim.wo[win].cursorline = false
 
-  render(buf, arr, attempts, start_time, false)
+  render(buf, arr, attempts, start_time, start_hrtime, false)
 
   local timer = uv.new_timer()
 
@@ -166,7 +169,7 @@ function M.start()
     -- render at most once per second
     local now = uv.hrtime()
     if sorted or (now - last_render) >= RENDER_NS then
-      render(buf, arr, attempts, start_time, sorted)
+      render(buf, arr, attempts, start_time, start_hrtime, sorted)
       last_render = now
     end
 

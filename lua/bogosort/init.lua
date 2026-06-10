@@ -63,6 +63,9 @@ local function fmt_attempts(n)
   return s:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
 end
 
+local _render_lines = {}
+local _render_parts = {}
+
 local function render(buf, arr, attempts, start_time, start_hrtime, done)
   local elapsed = fmt_time(os.time() - start_time)
   local elapsed_sec = math.max(0.001, (uv.hrtime() - start_hrtime) / 1e9)
@@ -71,8 +74,8 @@ local function render(buf, arr, attempts, start_time, start_hrtime, done)
   local header = string.format(" %s SpS | shuffles: %s | elapsed: %s | %s",
     fmt_attempts(math.floor(sps)), fmt_attempts(attempts), elapsed, status)
 
-  local lines = render._lines
-  local parts = render._parts
+  local lines = _render_lines
+  local parts = _render_parts
 
   for i = 1, N + 4 do lines[i] = nil end
 
@@ -119,9 +122,6 @@ local function render(buf, arr, attempts, start_time, start_hrtime, done)
     })
   end
 end
-
-render._lines = {}
-render._parts = {}
 
 local TICK_NS   = 12 * 1e6  -- 12ms shuffle per tick (down from 14ms, more timer slack)
 local RENDER_NS = 1e9        -- render once per second

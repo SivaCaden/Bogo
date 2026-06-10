@@ -34,11 +34,25 @@ local function fmt_time(secs)
     secs % 60)
 end
 
+local function fmt_attempts(n)
+  if n >= 1e15 then
+    return string.format("%.1fQ", n / 1e15)
+  elseif n >= 1e12 then
+    return string.format("%.1fT", n / 1e12)
+  elseif n >= 1e9 then
+    return string.format("%.1fB", n / 1e9)
+  elseif n >= 1e6 then
+    return string.format("%.1fM", n / 1e6)
+  end
+  local s = tostring(n)
+  return s:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
+end
+
 local function render(buf, arr, attempts, start_time, done)
   local elapsed = fmt_time(os.time() - start_time)
   local status = done and "*** SORTED! *** (q to close)" or "q to quit"
-  local header = string.format(" BogoSort | shuffles: %d | elapsed: %s | %s",
-    attempts, elapsed, status)
+  local header = string.format(" BogoSort | shuffles: %s | elapsed: %s | %s",
+    fmt_attempts(attempts), elapsed, status)
 
   local lines = {}
   table.insert(lines, header)

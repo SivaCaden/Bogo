@@ -116,7 +116,7 @@ local function render(buf, arr, attempts, start_time, start_hrtime, done)
     end
 
     vim.api.nvim_buf_set_extmark(buf, ns, N + 3, bs, {
-      end_row = N + 4,
+      end_row = N + 3,
       end_col = be,
       hl_group = hl,
     })

@@ -3,6 +3,21 @@ local M = {}
 local ns = vim.api.nvim_create_namespace("bogosort")
 local uv = vim.uv or vim.loop
 
+-- #region agent log
+local function dbglog(location, message, data)
+  local ok, json = pcall(vim.json.encode, {
+    sessionId = "500613",
+    location = location,
+    message = message,
+    data = data,
+    timestamp = os.time() * 1000,
+  })
+  if not ok then return end
+  local f = io.open("/Users/sivac0601/code/Bogo/.cursor/debug-500613.log", "a")
+  if f then f:write(json .. "\n"); f:close() end
+end
+-- #endregion
+
 local N = 25
 local COL_W = 3 -- "## " per column
 
@@ -56,54 +71,65 @@ local function render(buf, arr, attempts, start_time, start_hrtime, done)
   local header = string.format(" %s SpS | shuffles: %s | elapsed: %s | %s",
     fmt_attempts(math.floor(sps)), fmt_attempts(attempts), elapsed, status)
 
-  local lines = {}
-  table.insert(lines, header)
-  table.insert(lines, "")
+  local lines = render._lines
+  local parts = render._parts
 
-  -- bar chart: row N at top, row 1 at bottom
+  for i = 1, N + 4 do lines[i] = nil end
+
+  lines[1] = header
+  lines[2] = ""
+
   for row = N, 1, -1 do
-    local parts = {}
     for col = 1, N do
       parts[col] = arr[col] >= row and "## " or "   "
     end
-    table.insert(lines, table.concat(parts))
+    lines[N - row + 3] = table.concat(parts)
   end
 
-  table.insert(lines, string.rep("---", N))
+  lines[N + 3] = string.rep("---", N)
 
-  local vparts = {}
   for col = 1, N do
-    vparts[col] = string.format("%-3d", arr[col])
+    parts[col] = string.format("%-3d", arr[col])
   end
-  table.insert(lines, table.concat(vparts))
+  lines[N + 4] = table.concat(parts)
 
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
 
-  -- header highlight
   local header_hl = done and "BogoSorted" or "BogoHeader"
   vim.api.nvim_buf_add_highlight(buf, ns, header_hl, 0, 0, -1)
 
-  -- bar + values highlights
-  -- bar rows: line 2..(N+1), values row: line N+3
   for col = 1, N do
     local hl = (arr[col] == col) and "BogoCorrect" or "BogoWrong"
     local bs = (col - 1) * COL_W
     local be = bs + 2
 
-    for row = 1, arr[col] do
-      local li = 2 + (N - row)
-      vim.api.nvim_buf_add_highlight(buf, ns, hl, li, bs, be)
+    if arr[col] > 0 then
+      vim.api.nvim_buf_set_extmark(buf, ns, 2 + (N - arr[col]), bs, {
+        end_row = N + 1,
+        end_col = be,
+        hl_group = hl,
+      })
     end
 
-    vim.api.nvim_buf_add_highlight(buf, ns, hl, N + 3, bs, be)
+    vim.api.nvim_buf_set_extmark(buf, ns, N + 3, bs, {
+      end_row = N + 4,
+      end_col = be,
+      hl_group = hl,
+    })
   end
 end
 
-local TICK_NS   = 14 * 1e6  -- 14ms of shuffling per tick
+render._lines = {}
+render._parts = {}
+
+local TICK_NS   = 12 * 1e6  -- 12ms shuffle per tick (down from 14ms, more timer slack)
 local RENDER_NS = 1e9        -- render once per second
 
 function M.start()
+  -- #region agent log
+  dbglog("init.lua:start", "BogoSort started (instrumented build)", { pid = (uv.os_getpid and uv.os_getpid()) or 0 })
+  -- #endregion
   math.randomseed(os.time())
   setup_hl()
 
@@ -115,6 +141,11 @@ function M.start()
   local start_time = os.time()
   local start_hrtime = uv.hrtime()
   local last_render = start_hrtime
+
+  -- #region agent log
+  local last_tick = start_hrtime
+  local last_log = start_hrtime
+  -- #endregion
 
   local buf = vim.api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = "wipe"
@@ -157,6 +188,13 @@ function M.start()
       return
     end
 
+    -- #region agent log
+    local tick_enter = uv.hrtime()
+    local tick_gap_ms = (tick_enter - last_tick) / 1e6
+    last_tick = tick_enter
+    local attempts_before = attempts
+    -- #endregion
+
     -- tight shuffle loop for up to TICK_NS nanoseconds
     local deadline = uv.hrtime() + TICK_NS
     local sorted = false
@@ -166,12 +204,42 @@ function M.start()
       if is_sorted(arr) then sorted = true; break end
     until uv.hrtime() >= deadline
 
+    -- #region agent log
+    local loop_ms = (uv.hrtime() - tick_enter) / 1e6
+    local iters = attempts - attempts_before
+    local render_ms = 0
+    -- #endregion
+
     -- render at most once per second
     local now = uv.hrtime()
     if sorted or (now - last_render) >= RENDER_NS then
+      -- #region agent log
+      local r0 = uv.hrtime()
+      -- #endregion
       render(buf, arr, attempts, start_time, start_hrtime, sorted)
       last_render = now
+      -- #region agent log
+      render_ms = (uv.hrtime() - r0) / 1e6
+      -- #endregion
     end
+
+    -- #region agent log
+    if (tick_enter - last_log) >= 5e9 then
+      last_log = tick_enter
+      local elapsed_s = (tick_enter - start_hrtime) / 1e9
+      dbglog("init.lua:tick", "tick sample", {
+        elapsed_s = elapsed_s,
+        tick_gap_ms = tick_gap_ms,      -- H-D: inter-tick wall gap (expect ~16ms)
+        loop_ms = loop_ms,              -- H-A/H-E: busy-loop wall duration (expect ~12ms)
+        iters_this_tick = iters,        -- H-A/H-B: throughput per tick
+        inst_sps = iters / math.max(0.000001, loop_ms / 1000), -- H-B: instantaneous SpS
+        cumulative_sps = attempts / math.max(0.001, elapsed_s), -- H-B: displayed lifetime avg
+        render_ms = render_ms,          -- H-C: render cost
+        attempts = attempts,            -- H-E: magnitude of counter
+        hrtime = now,                   -- H-E: magnitude of clock
+      })
+    end
+    -- #endregion
 
     if sorted then
       if not timer:is_closing() then timer:stop() end

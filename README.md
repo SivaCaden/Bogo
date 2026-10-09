@@ -43,6 +43,14 @@ A floating window will appear showing a bar chart visualization of the bogosort 
 
 Press **`q`** to close the visualizer at any time.
 
+Running `:BogoSort` again focuses the existing visualizer rather than starting
+another sorting loop. Sorting uses a 2 ms work budget every 50 ms to keep the
+editor responsive.
+
+The chart adapts to the editor size, compressing bar heights and using narrower
+columns when needed. It requires at least 52 columns and 7 rows above the command
+line. Resizing below that minimum closes the visualizer with a warning.
+
 ## How It Works
 
 Bogosort is the most hilariously inefficient sorting algorithm. It works by:
